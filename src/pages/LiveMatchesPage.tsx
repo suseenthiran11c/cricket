@@ -23,14 +23,24 @@ export default function LiveMatchesPage() {
     const liveMatches = (data as unknown as Match[]) ?? [];
     setMatches(liveMatches);
 
-    for (const m of liveMatches) {
-      const [iRes, bRes] = await Promise.all([
-        supabase.from('innings').select('*').eq('match_id', m.id).order('innings_number'),
-        supabase.from('balls').select('*').eq('match_id', m.id).order('created_at'),
-      ]);
-      setInningsMap((prev) => ({ ...prev, [m.id]: (iRes.data as Innings[]) ?? [] }));
-      setBallsMap((prev) => ({ ...prev, [m.id]: (bRes.data as Ball[]) ?? [] }));
-    }
+    // Load all matches' innings and balls in parallel
+    const results = await Promise.all(
+      liveMatches.map((m) =>
+        Promise.all([
+          supabase.from('innings').select('*').eq('match_id', m.id).order('innings_number'),
+          supabase.from('balls').select('*').eq('match_id', m.id).order('created_at'),
+        ])
+      )
+    );
+
+    const iMap: Record<string, Innings[]> = {};
+    const bMap: Record<string, Ball[]> = {};
+    liveMatches.forEach((m, idx) => {
+      iMap[m.id] = (results[idx][0].data as Innings[]) ?? [];
+      bMap[m.id] = (results[idx][1].data as Ball[]) ?? [];
+    });
+    setInningsMap(iMap);
+    setBallsMap(bMap);
     setLoading(false);
   }, []);
 

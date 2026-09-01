@@ -70,17 +70,17 @@ export default function HomePage() {
 
       {/* Stats */}
       <section className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatCard icon={<Trophy className="h-5 w-5" />} label="Total Matches" value={liveMatches.length + recentMatches.length} color="primary" />
-        <StatCard icon={<Radio className="h-5 w-5" />} label="Live Now" value={liveMatches.length} color="error" />
-        <StatCard icon={<Users className="h-5 w-5" />} label="Teams" value={teamCount} color="accent" />
-        <StatCard icon={<User className="h-5 w-5" />} label="Players" value={playerCount} color="secondary" />
+        <StatCard icon={<Trophy className="h-5 w-5" />} label="Total Matches" value={loading ? null : liveMatches.length + recentMatches.length} color="primary" />
+        <StatCard icon={<Radio className="h-5 w-5" />} label="Live Now" value={loading ? null : liveMatches.length} color="error" />
+        <StatCard icon={<Users className="h-5 w-5" />} label="Teams" value={loading ? null : teamCount} color="accent" />
+        <StatCard icon={<User className="h-5 w-5" />} label="Players" value={loading ? null : playerCount} color="secondary" />
       </section>
 
       {/* Live Matches */}
       <section className="mt-8">
         <SectionHeader title="Live Matches" icon={<Radio className="h-5 w-5" />} link="/live" />
         {loading ? (
-          <div className="card p-8 text-center text-sm text-gray-500">Loading...</div>
+          <div className="card p-8 text-center text-sm text-gray-500">Loading matches…</div>
         ) : liveMatches.length === 0 ? (
           <div className="card p-8 text-center text-sm text-gray-500 dark:text-gray-400">
             No live matches right now. Start one to see it here.
@@ -98,7 +98,7 @@ export default function HomePage() {
       <section className="mt-8">
         <SectionHeader title="Recent Matches" icon={<Trophy className="h-5 w-5" />} link="/matches" />
         {loading ? (
-          <div className="card p-8 text-center text-sm text-gray-500">Loading...</div>
+          <div className="card p-8 text-center text-sm text-gray-500">Loading matches…</div>
         ) : recentMatches.length === 0 ? (
           <div className="card p-8 text-center text-sm text-gray-500 dark:text-gray-400">
             No completed matches yet.
@@ -126,7 +126,7 @@ export default function HomePage() {
   );
 }
 
-function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number; color: string }) {
+function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number | null; color: string }) {
   const colorMap: Record<string, string> = {
     primary: 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300',
     error: 'bg-error-100 text-error-700 dark:bg-error-900/30 dark:text-error-300',
@@ -139,7 +139,7 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
         {icon}
       </div>
       <div>
-        <p className="text-2xl font-bold leading-none">{value}</p>
+        <p className="text-2xl font-extrabold leading-none tabular-nums">{value === null ? '—' : value}</p>
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{label}</p>
       </div>
     </div>

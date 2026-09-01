@@ -160,7 +160,7 @@ export default function ScorePage() {
       (currentInnings?.target && computed.totalRuns >= currentInnings.target)
     : false;
 
-  async function recordBall(params: {
+  function recordBall(params: {
     runs_scored: number;
     extra_type: string | null;
     extra_runs: number;
@@ -173,8 +173,12 @@ export default function ScorePage() {
     const pos = nextBallPosition(currentBalls);
     const totalRuns = params.runs_scored + params.extra_runs;
     const legal = params.extra_type === null;
+    const isOverEnd = legal && pos.ball_number >= 6;
 
-    const { data: newBall } = await supabase.from('balls').insert({
+    // Optimistic: immediately add ball to local state
+    const tempId = `temp-${Date.now()}-${Math.random()}`;
+    const optimisticBall: Ball = {
+      id: tempId,
       match_id: match.id,
       innings_id: currentInnings.id,
       over_number: pos.over_number,
@@ -188,25 +192,20 @@ export default function ScorePage() {
       is_wicket: params.is_wicket,
       wicket_type: params.wicket_type ?? null,
       dismissed_player_id: params.dismissed_player_id ?? null,
-    }).select().single();
+      created_at: new Date().toISOString(),
+    };
+    setBalls((prev) => [...prev, optimisticBall]);
 
-    // Update innings totals
+    // Optimistic: update innings totals locally
     const newRuns = (currentInnings.total_runs ?? 0) + totalRuns;
     const newWickets = (currentInnings.total_wickets ?? 0) + (params.is_wicket ? 1 : 0);
     const newBallsBowled = (currentInnings.balls_bowled ?? 0) + (legal ? 1 : 0);
     const newExtras = (currentInnings.extras ?? 0) + (params.extra_type ? params.extra_runs : 0);
-
-    await supabase.from('innings').update({
-      total_runs: newRuns,
-      total_wickets: newWickets,
-      balls_bowled: newBallsBowled,
-      extras: newExtras,
-    }).eq('id', currentInnings.id);
+    const updatedInnings = { ...currentInnings, total_runs: newRuns, total_wickets: newWickets, balls_bowled: newBallsBowled, extras: newExtras };
+    setInnings((prev) => prev.map((i) => i.id === currentInnings.id ? updatedInnings : i));
 
     // Strike rotation
-    const isOverEnd = legal && pos.ball_number >= 6;
     const swap = shouldSwapStrike(params.runs_scored, params.extra_type, params.extra_runs, isOverEnd);
-
     if (swap) {
       setStrikerId(nonStrikerId);
       setNonStrikerId(strikerId);
@@ -215,7 +214,6 @@ export default function ScorePage() {
     // If wicket, prompt for new batsman
     if (params.is_wicket) {
       setShowNewBatsmanModal(true);
-      // Don't auto-swap on wicket unless run out with odd runs
     }
 
     // If over end, prompt for new bowler
@@ -224,11 +222,38 @@ export default function ScorePage() {
       setShowEndOverModal(true);
     }
 
-    // Reload data
-    await loadData();
+    // Fire DB writes in the background (no await, no blocking)
+    supabase.from('balls').insert({
+      match_id: match.id,
+      innings_id: currentInnings.id,
+      over_number: pos.over_number,
+      ball_number: pos.ball_number,
+      striker_id: strikerId,
+      non_striker_id: nonStrikerId,
+      bowler_id: bowlerId,
+      runs_scored: params.runs_scored,
+      extra_type: params.extra_type,
+      extra_runs: params.extra_runs,
+      is_wicket: params.is_wicket,
+      wicket_type: params.wicket_type ?? null,
+      dismissed_player_id: params.dismissed_player_id ?? null,
+    }).then(({ data }) => {
+      // Replace temp ball with real DB row so undo works correctly
+      if (data && (data as Ball[]).length > 0) {
+        const realBall = (data as Ball[])[0];
+        setBalls((prev) => prev.map((b) => b.id === tempId ? realBall : b));
+      }
+    });
+
+    supabase.from('innings').update({
+      total_runs: newRuns,
+      total_wickets: newWickets,
+      balls_bowled: newBallsBowled,
+      extras: newExtras,
+    }).eq('id', currentInnings.id);
   }
 
-  async function undoLastBall() {
+  function undoLastBall() {
     if (!match || !currentInnings || currentBalls.length === 0) return;
     if (!confirm('Undo the last ball? This will restore the previous score and all stats.')) return;
 
@@ -236,24 +261,18 @@ export default function ScorePage() {
     const totalRuns = lastBall.runs_scored + lastBall.extra_runs;
     const legal = lastBall.extra_type === null;
 
-    // Delete the ball
-    await supabase.from('balls').delete().eq('id', lastBall.id);
+    // Optimistic: remove ball from local state immediately
+    setBalls((prev) => prev.filter((b) => b.id !== lastBall.id));
 
-    // Revert innings totals
+    // Optimistic: revert innings totals locally
     const newRuns = currentInnings.total_runs - totalRuns;
     const newWickets = currentInnings.total_wickets - (lastBall.is_wicket ? 1 : 0);
     const newBallsBowled = currentInnings.balls_bowled - (legal ? 1 : 0);
     const newExtras = currentInnings.extras - (lastBall.extra_type ? lastBall.extra_runs : 0);
+    const updatedInnings = { ...currentInnings, total_runs: newRuns, total_wickets: newWickets, balls_bowled: newBallsBowled, extras: newExtras };
+    setInnings((prev) => prev.map((i) => i.id === currentInnings.id ? updatedInnings : i));
 
-    await supabase.from('innings').update({
-      total_runs: newRuns,
-      total_wickets: newWickets,
-      balls_bowled: newBallsBowled,
-      extras: newExtras,
-    }).eq('id', currentInnings.id);
-
-    // Restore strike position — need to figure out who was striker before this ball
-    // Simplest: set striker to the striker of the ball before last
+    // Restore strike position
     const prevBalls = currentBalls.slice(0, -1);
     if (prevBalls.length > 0) {
       const prevLast = prevBalls[prevBalls.length - 1];
@@ -270,7 +289,6 @@ export default function ScorePage() {
       }
       setBowlerId(prevLast.bowler_id);
     } else {
-      // No previous balls — reset to opening players
       setStrikerId(null);
       setNonStrikerId(null);
       setBowlerId(null);
@@ -279,7 +297,17 @@ export default function ScorePage() {
 
     setShowNewBatsmanModal(false);
     setShowEndOverModal(false);
-    await loadData();
+
+    // Fire DB writes in the background
+    if (!lastBall.id.startsWith('temp-')) {
+      supabase.from('balls').delete().eq('id', lastBall.id);
+    }
+    supabase.from('innings').update({
+      total_runs: newRuns,
+      total_wickets: newWickets,
+      balls_bowled: newBallsBowled,
+      extras: newExtras,
+    }).eq('id', currentInnings.id);
   }
 
   async function startNextInnings() {
@@ -321,7 +349,16 @@ export default function ScorePage() {
     setBowlerId(null);
     setShowInningsBreakModal(false);
     setShowBowlerModal(true);
-    await loadData();
+
+    // Optimistic: update local state immediately
+    setMatch((prev) => prev ? { ...prev, current_innings: nextInningsNumber, status: 'LIVE' } : prev);
+    if (newInnings) {
+      setInnings((prev) => [...prev, newInnings as Innings]);
+    }
+    setBalls([]);
+    setStrikerId(null);
+    setNonStrikerId(null);
+    setBowlerId(null);
   }
 
   async function finishMatch() {
@@ -348,6 +385,9 @@ export default function ScorePage() {
     }).eq('id', match.id);
 
     await supabase.from('innings').update({ is_complete: true }).eq('id', i2.id);
+
+    setMatch((prev) => prev ? { ...prev, status: 'COMPLETED', result } : prev);
+    setInnings((prev) => prev.map((i) => i.id === i2.id ? { ...i, is_complete: true } : i));
 
     navigate(`/match/${match.id}`);
   }
@@ -762,7 +802,7 @@ export default function ScorePage() {
               onClick={async () => {
                 if (!pendingWicket) return;
                 setShowWicketModal(false);
-                await recordBall({
+                recordBall({
                   runs_scored: 0,
                   extra_type: null,
                   extra_runs: 0,
