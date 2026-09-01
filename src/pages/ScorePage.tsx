@@ -267,7 +267,7 @@ export default function ScorePage() {
     // Optimistic: revert innings totals locally
     const newRuns = currentInnings.total_runs - totalRuns;
     const newWickets = currentInnings.total_wickets - (lastBall.is_wicket ? 1 : 0);
-    const newBallsBowled = currentInnings.balls_bowled - (legal ? 1 : 0);
+    const newBallsBowled = Math.max(0, currentInnings.balls_bowled - (legal ? 1 : 0));
     const newExtras = currentInnings.extras - (lastBall.extra_type ? lastBall.extra_runs : 0);
     const updatedInnings = { ...currentInnings, total_runs: newRuns, total_wickets: newWickets, balls_bowled: newBallsBowled, extras: newExtras };
     setInnings((prev) => prev.map((i) => i.id === currentInnings.id ? updatedInnings : i));
@@ -419,11 +419,9 @@ export default function ScorePage() {
   const nonStriker = nonStrikerId ? players[nonStrikerId] : null;
   const bowler = bowlerId ? players[bowlerId] : null;
 
-  const totalRuns = computed?.totalRuns ?? currentInnings?.total_runs ?? 0;
-  const totalWickets = computed?.totalWickets ?? currentInnings?.total_wickets ?? 0;
-  const ballsBowled = computed?.ballsBowled ?? currentInnings?.balls_bowled ?? 0;
-  const oversStr = oversToString(ballsBowled);
-  const crr = runRate(ballsBowled, totalRuns);
+  const totalRuns = Math.max(0, computed?.totalRuns ?? currentInnings?.total_runs ?? 0);
+  const totalWickets = Math.max(0, computed?.totalWickets ?? currentInnings?.total_wickets ?? 0);
+  const ballsBowled = Math.max(0, computed?.ballsBowled ?? currentInnings?.balls_bowled ?? 0);
   const target = currentInnings?.target;
   const runsNeeded = target ? target - totalRuns : null;
   const ballsLeft = match.overs_limit * 6 - ballsBowled;
@@ -462,7 +460,7 @@ export default function ScorePage() {
               <p className="text-4xl font-extrabold tabular-nums">
                 {totalRuns}/{totalWickets}
               </p>
-              <p className="text-sm text-primary-50/80">{oversStr} overs · CRR {crr.toFixed(2)}</p>
+              <p className="text-sm text-primary-50/80">{oversToString(ballsBowled)} overs · CRR {runRate(ballsBowled, totalRuns).toFixed(2)}</p>
             </div>
           </div>
           {target && (
@@ -767,7 +765,7 @@ export default function ScorePage() {
       >
         <div className="mb-4 rounded-xl bg-primary-50 p-4 text-center dark:bg-primary-900/20">
           <p className="text-2xl font-extrabold">{totalRuns}/{totalWickets}</p>
-          <p className="text-sm text-gray-500 dark:text-gray-400">CRR: {crr.toFixed(2)}</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">CRR: {runRate(ballsBowled, totalRuns).toFixed(2)}</p>
         </div>
         <p className="mb-3 text-sm font-semibold">Select next bowler:</p>
         <div className="space-y-2 max-h-48 overflow-y-auto">

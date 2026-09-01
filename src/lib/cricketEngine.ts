@@ -9,22 +9,25 @@ import type {
 } from './types';
 
 export function oversToString(ballsBowled: number): string {
-  const overs = Math.floor(ballsBowled / 6);
-  const balls = ballsBowled % 6;
+  const safe = Math.max(0, ballsBowled);
+  const overs = Math.floor(safe / 6);
+  const balls = safe % 6;
   return balls === 0 ? `${overs}` : `${overs}.${balls}`;
 }
 
 export function runRate(ballsBowled: number, runs: number): number {
-  if (ballsBowled === 0) return 0;
-  return (runs / ballsBowled) * 6;
+  const safeBalls = Math.max(0, ballsBowled);
+  if (safeBalls === 0) return 0;
+  return (Math.max(0, runs) / safeBalls) * 6;
 }
 
 export function requiredRunRate(
   runsNeeded: number,
   ballsRemaining: number
 ): number {
-  if (ballsRemaining <= 0) return 0;
-  return (runsNeeded / ballsRemaining) * 6;
+  const safeBalls = Math.max(0, ballsRemaining);
+  if (safeBalls <= 0) return 0;
+  return (Math.max(0, runsNeeded) / safeBalls) * 6;
 }
 
 export function isLegalBall(ball: Ball): boolean {

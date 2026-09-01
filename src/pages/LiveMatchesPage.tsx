@@ -65,9 +65,9 @@ export default function LiveMatchesPage() {
             const currentInn = inningsMap[m.id]?.find((i) => i.innings_number === m.current_innings);
             const innBalls = currentInn ? (ballsMap[m.id] ?? []).filter((b) => b.innings_id === currentInn.id) : [];
             const computed = currentInn && innBalls.length > 0 ? computeInnings(currentInn, innBalls, {}) : null;
-            const totalRuns = computed?.totalRuns ?? currentInn?.total_runs ?? 0;
-            const totalWkts = computed?.totalWickets ?? currentInn?.total_wickets ?? 0;
-            const ballsBowled = computed?.ballsBowled ?? currentInn?.balls_bowled ?? 0;
+            const totalRuns = Math.max(0, computed?.totalRuns ?? currentInn?.total_runs ?? 0);
+            const totalWkts = Math.max(0, computed?.totalWickets ?? currentInn?.total_wickets ?? 0);
+            const ballsBowled = Math.max(0, computed?.ballsBowled ?? currentInn?.balls_bowled ?? 0);
             const battingTeam = currentInn?.batting_team_id === m.team_a_id ? m.team_a : m.team_b;
             const bowlingTeam = currentInn?.batting_team_id === m.team_a_id ? m.team_b : m.team_a;
 
