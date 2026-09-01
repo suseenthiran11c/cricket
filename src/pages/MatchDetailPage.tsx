@@ -28,7 +28,15 @@ export default function MatchDetailPage() {
       supabase.from('match_players').select('*, player:players(*)').eq('match_id', matchId),
     ]);
 
-    const m = mRes.data as unknown as Match;
+    // If the main match query fails, retry without the toss_winner join
+    let m = mRes.data as unknown as Match | null;
+    if (mRes.error || !m) {
+      const { data: fallback } = await supabase
+        .from('matches')
+        .select('*, team_a:teams!matches_team_a_id_fkey(*), team_b:teams!matches_team_b_id_fkey(*)')
+        .eq('id', matchId).single();
+      m = fallback as unknown as Match;
+    }
     setMatch(m);
     setInnings((iRes.data as Innings[]) ?? []);
     setBalls((bRes.data as Ball[]) ?? []);
