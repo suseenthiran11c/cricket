@@ -1,12 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import type { Match, Innings, Ball, Player, Team, MatchPlayer } from '@/lib/types';
+import type { Match, Innings, Ball, Player, Team, MatchPlayer, BattingStat, BowlingStat } from '@/lib/types';
 import { computeInnings, oversToString, labelBall, type ComputedInnings } from '@/lib/cricketEngine';
 import { EXTRA_TYPES, WICKET_TYPES } from '@/lib/constants';
 import PageHeader from '@/components/PageHeader';
 import Loading from '@/components/Loading';
-import { ArrowLeft, Trophy, MapPin, Calendar, Clock, Play, Pause, Trash2, Pencil } from 'lucide-react';
+import { ArrowLeft, Trophy, MapPin, Calendar, Clock, Play, Pause, Trash2, Pencil, Star, Award, TrendingUp } from 'lucide-react';
 
 export default function MatchDetailPage() {
   const { matchId } = useParams<{ matchId: string }>();
@@ -107,16 +107,98 @@ export default function MatchDetailPage() {
           </div>
         </div>
 
-        {/* Result */}
+        {/* Result + Highlights */}
         {isCompleted && match.result && (
-          <div className="bg-success-50 px-5 py-4 text-center dark:bg-success-900/20">
-            <p className="text-lg font-extrabold text-success-700 dark:text-success-300">{match.result}</p>
-            {match.player_of_match && (
-              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                Player of the Match: <span className="font-semibold">{players[match.player_of_match_id ?? '']?.name ?? '—'}</span>
-              </p>
-            )}
-          </div>
+          <>
+            <div className="bg-success-50 px-5 py-4 text-center dark:bg-success-900/20">
+              <p className="text-lg font-extrabold text-success-700 dark:text-success-300">{match.result}</p>
+            </div>
+
+            {(() => {
+              // Compute combined stats across all innings
+              const batMap = new Map<string, BattingStat>();
+              const bowlMap = new Map<string, BowlingStat>();
+              for (const inn of innings) {
+                const innBalls = balls.filter((b) => b.innings_id === inn.id);
+                if (innBalls.length === 0) continue;
+                const c = computeInnings(inn, innBalls, players);
+                for (const s of c.battingStats) {
+                  const ex = batMap.get(s.player_id);
+                  if (ex) {
+                    ex.runs += s.runs; ex.balls += s.balls; ex.fours += s.fours; ex.sixes += s.sixes;
+                    ex.strike_rate = ex.balls > 0 ? (ex.runs / ex.balls) * 100 : 0;
+                  } else batMap.set(s.player_id, { ...s });
+                }
+                for (const s of c.bowlingStats) {
+                  const ex = bowlMap.get(s.player_id);
+                  if (ex) {
+                    ex.balls += s.balls; ex.runs += s.runs; ex.wickets += s.wickets; ex.maidens += s.maidens;
+                    ex.overs = oversToString(ex.balls);
+                    ex.economy = ex.balls > 0 ? (ex.runs / ex.balls) * 6 : 0;
+                  } else bowlMap.set(s.player_id, { ...s });
+                }
+              }
+              const bestBatter = Array.from(batMap.values())
+                .filter((b) => b.balls > 0)
+                .sort((a, b) => b.runs - a.runs || b.strike_rate - a.strike_rate)[0];
+              const bestBowler = Array.from(bowlMap.values())
+                .filter((b) => b.balls > 0)
+                .sort((a, b) => b.wickets - a.wickets || a.runs - b.runs)[0];
+              const pomId = match.player_of_match_id;
+              const pomPlayer = pomId ? players[pomId] : null;
+              const pomTeam = pomPlayer ? teams[pomPlayer.team_id] : null;
+              const batTeam = bestBatter ? teams[players[bestBatter.player_id]?.team_id ?? ''] : null;
+              const bowlTeam = bestBowler ? teams[players[bestBowler.player_id]?.team_id ?? ''] : null;
+
+              if (!pomPlayer && !bestBatter && !bestBowler) return null;
+
+              return (
+                <div className="grid grid-cols-1 gap-px bg-gray-200 sm:grid-cols-3 dark:bg-gray-800">
+                  {/* Player of the Match */}
+                  {pomPlayer && (
+                    <div className="bg-gradient-to-br from-warning-50 to-warning-100/50 px-4 py-4 text-center dark:from-warning-900/20 dark:to-warning-900/5">
+                      <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-warning-500 text-white shadow-lg shadow-warning-500/30">
+                        <Trophy className="h-6 w-6" />
+                      </div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-warning-700 dark:text-warning-300">Player of the Match</p>
+                      <p className="mt-1 text-sm font-extrabold">{pomPlayer.name}</p>
+                      {pomTeam && <p className="text-xs text-gray-500 dark:text-gray-400">{pomTeam.name}</p>}
+                    </div>
+                  )}
+
+                  {/* Best Batsman */}
+                  {bestBatter && (
+                    <div className="bg-white px-4 py-4 text-center dark:bg-gray-900">
+                      <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
+                        <TrendingUp className="h-6 w-6" />
+                      </div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-primary-700 dark:text-primary-300">Best Batsman</p>
+                      <p className="mt-1 text-sm font-extrabold">{bestBatter.player_name}</p>
+                      {batTeam && <p className="text-xs text-gray-500 dark:text-gray-400">{batTeam.name}</p>}
+                      <p className="mt-1 text-xs font-semibold tabular-nums text-gray-600 dark:text-gray-400">
+                        {bestBatter.runs} ({bestBatter.balls}) · {bestBatter.fours}x4 {bestBatter.sixes}x6
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Best Bowler */}
+                  {bestBowler && (
+                    <div className="bg-white px-4 py-4 text-center dark:bg-gray-900">
+                      <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-accent-100 text-accent-700 dark:bg-accent-900/30 dark:text-accent-300">
+                        <Award className="h-6 w-6" />
+                      </div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-accent-700 dark:text-accent-300">Best Bowler</p>
+                      <p className="mt-1 text-sm font-extrabold">{bestBowler.player_name}</p>
+                      {bowlTeam && <p className="text-xs text-gray-500 dark:text-gray-400">{bowlTeam.name}</p>}
+                      <p className="mt-1 text-xs font-semibold tabular-nums text-gray-600 dark:text-gray-400">
+                        {bestBowler.wickets}/{bestBowler.runs} ({bestBowler.overs} ov)
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </>
         )}
 
         {/* Toss info */}

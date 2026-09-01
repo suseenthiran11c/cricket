@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import type { Match, Innings, Ball, Player, Team } from '@/lib/types';
+import type { Match, Innings, Ball, Player, Team, BattingStat, BowlingStat } from '@/lib/types';
 import { EXTRA_TYPES, WICKET_TYPES } from '@/lib/constants';
 import {
   computeInnings,
@@ -17,6 +17,7 @@ import {
 } from '@/lib/cricketEngine';
 import Modal from '@/components/Modal';
 import Loading from '@/components/Loading';
+import { Trophy, Star, Award, TrendingUp } from 'lucide-react';
 
 type Mode = 'runs' | 'extras' | 'wicket';
 
@@ -49,6 +50,10 @@ export default function ScorePage() {
     dismissedId: string;
   } | null>(null);
   const lastOverBowlerRef = useRef<string | null>(null);
+  const [showPOMModal, setShowPOMModal] = useState(false);
+  const [matchResult, setMatchResult] = useState<string>('');
+  const [allBattingStats, setAllBattingStats] = useState<BattingStat[]>([]);
+  const [allBowlingStats, setAllBowlingStats] = useState<BowlingStat[]>([]);
 
   const currentInnings = innings.find((i) => i.innings_number === match?.current_innings) ?? null;
 
@@ -389,6 +394,55 @@ export default function ScorePage() {
     setMatch((prev) => prev ? { ...prev, status: 'COMPLETED', result } : prev);
     setInnings((prev) => prev.map((i) => i.id === i2.id ? { ...i, is_complete: true } : i));
 
+    // Compute combined stats across all innings for POM selection
+    const i1Balls = balls.filter((b) => b.innings_id === i1.id);
+    const i2Balls = balls.filter((b) => b.innings_id === i2.id);
+    const c1 = computeInnings(i1, i1Balls, players);
+    const c2 = computeInnings(i2, i2Balls, players);
+
+    // Merge batting stats across innings
+    const batMap = new Map<string, BattingStat>();
+    for (const stat of [...c1.battingStats, ...c2.battingStats]) {
+      const existing = batMap.get(stat.player_id);
+      if (existing) {
+        existing.runs += stat.runs;
+        existing.balls += stat.balls;
+        existing.fours += stat.fours;
+        existing.sixes += stat.sixes;
+        existing.strike_rate = existing.balls > 0 ? (existing.runs / existing.balls) * 100 : 0;
+      } else {
+        batMap.set(stat.player_id, { ...stat });
+      }
+    }
+    // Merge bowling stats across innings
+    const bowlMap = new Map<string, BowlingStat>();
+    for (const stat of [...c1.bowlingStats, ...c2.bowlingStats]) {
+      const existing = bowlMap.get(stat.player_id);
+      if (existing) {
+        existing.balls += stat.balls;
+        existing.runs += stat.runs;
+        existing.wickets += stat.wickets;
+        existing.maidens += stat.maidens;
+        existing.overs = oversToString(existing.balls);
+        existing.economy = existing.balls > 0 ? (existing.runs / existing.balls) * 6 : 0;
+      } else {
+        bowlMap.set(stat.player_id, { ...stat });
+      }
+    }
+
+    setAllBattingStats(Array.from(batMap.values()));
+    setAllBowlingStats(Array.from(bowlMap.values()));
+    setMatchResult(result);
+    setShowPOMModal(true);
+  }
+
+  async function confirmPlayerOfMatch(playerId: string | null) {
+    if (!match) return;
+    if (playerId) {
+      await supabase.from('matches').update({ player_of_match_id: playerId }).eq('id', match.id);
+      setMatch((prev) => prev ? { ...prev, player_of_match_id: playerId } : prev);
+    }
+    setShowPOMModal(false);
     navigate(`/match/${match.id}`);
   }
 
@@ -916,6 +970,146 @@ export default function ScorePage() {
             )}
           </div>
         )}
+      </Modal>
+
+      {/* Player of the Match selection modal */}
+      <Modal
+        open={showPOMModal}
+        onClose={() => {}}
+        title="Match Complete!"
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl bg-gradient-to-r from-primary-700 to-primary-600 p-5 text-center text-white">
+            <Trophy className="mx-auto mb-2 h-8 w-8" />
+            <p className="text-lg font-extrabold">{matchResult}</p>
+          </div>
+
+          {(() => {
+            const topBatters = [...allBattingStats]
+              .filter((b) => b.balls > 0)
+              .sort((a, b) => b.runs - a.runs || b.strike_rate - a.strike_rate)
+              .slice(0, 5);
+            const topBowlers = [...allBowlingStats]
+              .filter((b) => b.balls > 0)
+              .sort((a, b) => b.wickets - a.wickets || a.runs - b.runs)
+              .slice(0, 5);
+
+            // Auto-suggest: best batting + bowling combined
+            const bestBat = topBatters[0];
+            const bestBowl = topBowlers[0];
+            const candidates: { id: string; name: string; reason: string }[] = [];
+            if (bestBat) {
+              candidates.push({
+                id: bestBat.player_id,
+                name: bestBat.player_name,
+                reason: `${bestBat.runs} runs (${bestBat.balls} balls, SR ${bestBat.strike_rate.toFixed(1)})`,
+              });
+            }
+            if (bestBowl && bestBowl.player_id !== bestBat?.player_id) {
+              candidates.push({
+                id: bestBowl.player_id,
+                name: bestBowl.player_name,
+                reason: `${bestBowl.wickets} wickets for ${bestBowl.runs} runs (${bestBowl.overs} ov, Econ ${bestBowl.economy.toFixed(2)})`,
+              });
+            }
+
+            return (
+              <>
+                <div>
+                  <p className="mb-2 flex items-center gap-1.5 text-sm font-bold">
+                    <Star className="h-4 w-4 text-warning-500" /> Player of the Match
+                  </p>
+                  <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                    Select the best performer from this match.
+                  </p>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {candidates.map((c) => {
+                      const player = players[c.id];
+                      const teamName = player ? teams[player.team_id]?.name ?? '' : '';
+                      return (
+                        <button
+                          key={c.id}
+                          onClick={() => confirmPlayerOfMatch(c.id)}
+                          className="flex w-full items-center gap-3 rounded-xl border-2 border-warning-300 bg-warning-50 p-3 text-left transition-all hover:border-warning-500 hover:bg-warning-100 dark:border-warning-700 dark:bg-warning-900/20 dark:hover:bg-warning-900/30"
+                        >
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-warning-500 text-white">
+                            <Trophy className="h-5 w-5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-bold truncate">{c.name}</p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">{c.reason}</p>
+                            {teamName && <p className="text-xs text-gray-400">{teamName}</p>}
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {/* Show all players as a dropdown for manual selection */}
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs font-medium text-primary-600 dark:text-primary-400">
+                        Select from all players
+                      </summary>
+                      <div className="mt-2 space-y-1">
+                        {matchPlayers.map((mp) => {
+                          const p = players[mp.player_id];
+                          if (!p) return null;
+                          const teamName = teams[mp.team_id]?.name ?? '';
+                          return (
+                            <button
+                              key={mp.player_id}
+                              onClick={() => confirmPlayerOfMatch(mp.player_id)}
+                              className="flex w-full items-center gap-2 rounded-lg border border-gray-200 p-2 text-left text-sm transition-colors hover:border-primary-300 dark:border-gray-700"
+                            >
+                              <span className="font-medium">{p.name}</span>
+                              <span className="text-xs text-gray-400">{teamName}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </details>
+                    <button
+                      onClick={() => confirmPlayerOfMatch(null)}
+                      className="w-full rounded-lg py-2 text-xs font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                    >
+                      Skip — no Player of the Match
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick highlights preview */}
+                {(topBatters.length > 0 || topBowlers.length > 0) && (
+                  <div className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800/50">
+                    {topBatters.length > 0 && (
+                      <div className="mb-3">
+                        <p className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-gray-400">
+                          <TrendingUp className="h-3 w-3" /> TOP BATTING
+                        </p>
+                        {topBatters.slice(0, 3).map((b, i) => (
+                          <div key={b.player_id} className="flex items-center justify-between py-0.5 text-sm">
+                            <span className={i === 0 ? 'font-bold' : ''}>{i + 1}. {b.player_name}</span>
+                            <span className="tabular-nums text-gray-500 dark:text-gray-400">{b.runs} ({b.balls})</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {topBowlers.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-gray-400">
+                          <Award className="h-3 w-3" /> TOP BOWLING
+                        </p>
+                        {topBowlers.slice(0, 3).map((b, i) => (
+                          <div key={b.player_id} className="flex items-center justify-between py-0.5 text-sm">
+                            <span className={i === 0 ? 'font-bold' : ''}>{i + 1}. {b.player_name}</span>
+                            <span className="tabular-nums text-gray-500 dark:text-gray-400">{b.wickets}/{b.runs} ({b.overs})</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
       </Modal>
     </div>
   );
